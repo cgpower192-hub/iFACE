@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0d1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Aura — Motion, Focus & Gesture Control</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+<style>
+  :root{--ink:#eef0ff;--mute:#9aa0c8;--card:rgba(13,15,30,.74);--line:rgba(255,255,255,.09);--a:#8b9cff;--b:#5eead4}
+  html,body{min-height:100%;margin:0;background:#0b0d1a;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif}
+  #bg{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+  .veil{position:fixed;inset:0;z-index:1;background:radial-gradient(ellipse at top,rgba(11,13,26,.15),rgba(11,13,26,.72))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px}
+  .k{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+  .big{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  .pill{display:inline-flex;gap:6px;align-items:center;padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid var(--line);font-size:12px;color:var(--mute)}
+  .pill b{color:var(--ink);font-weight:600}
+  .bar{height:6px;border-radius:9px;background:rgba(255,255,255,.1);overflow:hidden}
+  .bar>i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--a),var(--b));width:0;transition:width .25s}
+  .btn{padding:6px 11px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid var(--line);font-size:12px;font-weight:600}
+  .btn:hover{background:rgba(139,156,255,.28)}
+  .tab{padding:7px 14px;border-radius:999px;font-size:13px;font-weight:600;color:var(--mute)}
+  .tab.on{background:rgba(139,156,255,.22);color:var(--ink)}
+  .scan::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.1) 0 1px,transparent 1px 4px)}
+  .glitch{animation:gl .6s steps(2) 1}
+  @keyframes gl{0%{transform:translate(4px,0);filter:hue-rotate(90deg) contrast(2)}25%{transform:translate(-6px,2px);filter:invert(1)}50%{transform:translate(3px,-3px) skewX(6deg);filter:hue-rotate(200deg)}75%{transform:translate(-2px,1px)}100%{transform:none;filter:none}}
+  #log div{padding:6px 0;border-bottom:1px solid var(--line);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  input[type=text]{width:100%;background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:10px;padding:8px 10px;color:var(--ink);font-size:13px}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas><div class="veil"></div>
+
+<!-- Onboarding -->
+<div id="start" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(7,8,18,.86)">
+  <div class="card p-7 max-w-md w-full">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-10 h-10 rounded-2xl" style="background:linear-gradient(135deg,#8b9cff,#5eead4)"></div>
+      <h1 class="text-2xl font-bold tracking-tight">Aura</h1>
+    </div>
+    <p class="text-sm mb-4" style="color:var(--mute)">Your camera becomes a mood-reactive canvas, a focus coach and a hands-free Mac remote. Video never leaves this device.</p>
+    <ol class="text-sm space-y-2 mb-5" style="color:var(--mute)">
+      <li><b class="text-white">1.</b> Run <code class="text-teal-300">node bridge.js</code> on your Mac.</li>
+      <li><b class="text-white">2.</b> Serve this page: <code class="text-teal-300">python3 -m http.server 8000</code></li>
+      <li><b class="text-white">3.</b> Allow camera, and give your terminal Accessibility access.</li>
+    </ol>
+    <button id="go" class="w-full py-3 rounded-2xl font-semibold text-slate-900" style="background:linear-gradient(135deg,#8b9cff,#5eead4)">Start Aura</button>
+    <p id="status" class="mt-3 text-xs text-pink-300 min-h-[1rem]"></p>
+  </div>
+</div>
+
+<div class="relative z-10 max-w-[1400px] mx-auto p-4 lg:p-6">
+  <!-- Top bar -->
+  <header class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl" style="background:linear-gradient(135deg,#8b9cff,#5eead4)"></div>
+      <div><div class="font-bold text-lg leading-none">Aura</div><div class="text-xs" style="color:var(--mute)">Motion · Focus · Gesture hub</div></div>
+    </div>
+    <div class="flex flex-wrap gap-2 items-center">
+      <span class="pill">FPS <b id="fps">--</b></span>
+      <span class="pill">Mac bridge <b id="bridge" style="color:#f9a8d4">OFFLINE</b></span>
+      <span class="pill"><b id="clock"></b></span>
+      <button id="gear" class="btn" aria-label="Settings">⚙ Settings</button>
+    </div>
+  </header>
+
+  <div class="grid gap-4 lg:grid-cols-[1fr_330px]">
+    <!-- Main column -->
+    <div class="space-y-4">
+      <div class="card p-2">
+        <section id="stage" class="relative rounded-2xl overflow-hidden scan bg-black">
+          <canvas id="view" width="640" height="480" class="w-full block"></canvas>
+          <video id="cam" playsinline muted class="hidden"></video>
+          <div id="flash" class="absolute inset-0 bg-white opacity-0 pointer-events-none transition-opacity duration-300"></div>
+          <div class="absolute left-3 bottom-3 flex gap-2"><span class="pill" style="background:rgba(0,0,0,.55)">Gesture <b id="gest">NONE</b></span><span class="pill" style="background:rgba(0,0,0,.55)"><b id="gAct" style="color:#5eead4">idle</b></span></div>
+        </section>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="card p-4"><div class="k mb-2">Mood</div><div id="mood" class="big" style="font-size:18px">--</div></div>
+        <div class="card p-4"><div class="k mb-2">Motion <span id="enV" class="float-right text-white">0%</span></div><div class="big mb-2"><span style="font-size:15px;color:var(--mute)">energy</span></div><div class="bar"><i id="enB"></i></div></div>
+        <div class="card p-4 flex items-center gap-3">
+          <svg width="76" height="76" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b9cff"/><stop offset="1" stop-color="#5eead4"/></linearGradient></defs>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="9"/>
+            <circle id="foB" cx="50" cy="50" r="40" fill="none" stroke="url(#g)" stroke-width="9" stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="251.3" transform="rotate(-90 50 50)" style="transition:stroke-dashoffset .3s"/></svg>
+          <div><div class="k">Focus</div><div id="foV" class="big">0%</div></div>
+        </div>
+        <div class="card p-4 grid grid-cols-2 gap-2 text-sm">
+          <div><div class="k">Blinks/m</div><b id="blk">0</b></div><div><div class="k">Steady</div><b id="std">0</b></div>
+          <div><div class="k">Light</div><b id="lux">0</b></div><div><div class="k">Objects</div><b id="obj">0</b></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Side panel -->
+    <aside class="card p-4 flex flex-col min-h-[420px]">
+      <nav class="flex gap-1 mb-3"><button class="tab on" data-tab="log">Activity</button><button class="tab" data-tab="gst">Gestures</button><button class="tab" data-tab="set">Settings</button></nav>
+      <div data-pane="log" class="flex-1">
+        <div id="log" class="max-h-[420px] overflow-hidden"></div>
+        <div class="k mt-4 mb-2">Quick test</div><div class="flex flex-wrap gap-2" id="tests"></div>
+      </div>
+      <div data-pane="gst" class="hidden space-y-2 text-sm">
+        <div class="card p-3">🖐 Palm swipe ← → <div style="color:var(--mute)" class="text-xs">Switch Spaces</div></div>
+        <div class="card p-3">👍 / 👎 Thumbs <div style="color:var(--mute)" class="text-xs">Volume up / down (hold to repeat)</div></div>
+        <div class="card p-3">✊ Fist <div style="color:var(--mute)" class="text-xs">Play / pause media</div></div>
+        <div class="card p-3">✌ Peace <div style="color:var(--mute)" class="text-xs">Glitch screenshot</div></div>
+      </div>
+      <div data-pane="set" class="hidden space-y-4 text-sm">
+        <label class="block"><div class="k mb-1">Bridge address</div><input id="cfgBridge" type="text" spellcheck="false"></label>
+        <label class="flex items-center justify-between"><span>Object detection</span><input id="cfgObj" type="checkbox" class="w-5 h-5 accent-indigo-400"></label>
+        <p class="text-xs" style="color:var(--mute)">Settings are saved in this browser. Install as an app from Chrome’s menu: Cast, save and share → Install page as app.</p>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+/* ============ CONFIG ============ */
+const CFG = Object.assign({bridge:'http://127.0.0.1:8765', obj:true}, (()=>{try{return JSON.parse(localStorage.getItem('aura_cfg'))||{}}catch(e){return {}}})());
+let BRIDGE = CFG.bridge;   // local macOS listener (bridge.js)
+const saveCfg = ()=>{try{localStorage.setItem('aura_cfg',JSON.stringify(CFG))}catch(e){}};
+const ACTIONS = {                          // gesture → bridge action
+  SWIPE_LEFT:'space_left', SWIPE_RIGHT:'space_right',
+  THUMBS_UP:'volume_up', THUMBS_DOWN:'volume_down',
+  FIST:'playpause',                        // change to 'lock' for quick-lock
+  PEACE:'screenshot'
+};
+const WATCH = ['cell phone','cup','bottle','wine glass','book','laptop','mouse','keyboard','remote','scissors'];
+
+/* ============ HELPERS ============ */
+const $ = id => document.getElementById(id);
+const clamp = (v,a=0,b=1) => Math.max(a,Math.min(b,v));
+const dist = (a,b,w=1,h=1) => Math.hypot((a.x-b.x)*w,(a.y-b.y)*h);
+const logEl = $('log'); const logs = [];
+function log(msg,c='#7ff'){
+  const t = new Date().toLocaleTimeString([], {hour12:false});
+  logs.unshift(`<div style="color:${c}">[${t}] ${msg}</div>`); logs.length = 16;
+  logEl.innerHTML = logs.join('');
+}
+setInterval(()=>$('clock').textContent = new Date().toLocaleTimeString([], {hour12:false}),1000);
+
+/* ============ MAC BRIDGE ============ */
+let bridgeUp = false;
+async function ping(){
+  try{ const r = await fetch(BRIDGE+'/ping'); bridgeUp = r.ok; }catch(e){ bridgeUp = false; }
+  $('bridge').textContent = bridgeUp ? 'ONLINE' : 'OFFLINE';
+  $('bridge').style.color = bridgeUp ? '#5eead4' : '#f9a8d4';
+}
+setInterval(ping,4000); ping();
+async function sendAction(action, label){
+  $('gAct').textContent = '▶ ' + action.toUpperCase();
+  if(action === 'screenshot') glitchFx();
+  try{
+    const r = await fetch(BRIDGE+'/gesture', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action, gesture:label, ts:Date.now()})});
+    log(`${label} → ${action} ${r.ok?'OK':'ERR'}`, r.ok?'#0f8':'#fa0');
+  }catch(e){ log(`${label} → ${action} (bridge offline)`, '#f4f'); }
+}
+function glitchFx(){
+  const s=$('stage'), f=$('flash');
+  s.classList.remove('glitch'); void s.offsetWidth; s.classList.add('glitch');
+  f.style.opacity=.8; setTimeout(()=>f.style.opacity=0,120);
+}
+Object.entries({'◀':'space_left','▶':'space_right','VOL+':'volume_up','VOL−':'volume_down','PLAY':'playpause','SNAP':'screenshot'})
+  .forEach(([k,a])=>{ const b=document.createElement('button'); b.className='btn'; b.textContent=k; b.onclick=()=>sendAction(a,'MANUAL'); $('tests').appendChild(b); });
+
+/* ============ STATE ============ */
+const S = { energy:0, pos:{x:.5,y:.5}, prev:null, prevT:0, focus:50, nose:[], blinks:[], eyeClosed:false,
+            steady:0, phone:false, face:null, hand:null, dets:[], frames:0, lux:0 };
+
+/* ============ BACKGROUND SHADER (low-res for old GPUs) ============ */
+const renderer = new THREE.WebGLRenderer({canvas:$('bg'), antialias:false, powerPreference:'low-power'});
+renderer.setPixelRatio(.5);
+const scene = new THREE.Scene(), ocam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+const U = {uT:{value:0}, uE:{value:0}, uF:{value:.5}, uP:{value:new THREE.Vector2(.5,.5)}, uR:{value:new THREE.Vector2(1,1)}};
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMaterial({uniforms:U,
+  vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position,1.);}',
+  fragmentShader:`precision mediump float;varying vec2 vUv;uniform float uT,uE,uF;uniform vec2 uP,uR;
+  float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+  float n(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(h(i),h(i+vec2(1,0)),f.x),mix(h(i+vec2(0,1)),h(i+vec2(1,1)),f.x),f.y);}
+  float fbm(vec2 p){float a=.5,s=0.;for(int i=0;i<3;i++){s+=a*n(p);p*=2.;a*=.5;}return s;}
+  void main(){
+    vec2 uv=vUv*vec2(uR.x/uR.y,1.); float t=uT*(.1+uE*1.1);
+    vec2 q=vec2(fbm(uv*2.+t),fbm(uv*2.+vec2(5.2,1.3)-t));
+    float f=fbm(uv*2.5+q*(1.4+uE*3.)+(uP-.5)*1.6+t*.5);
+    vec3 calm=mix(vec3(.02,.12,.35),vec3(.0,.75,.62),f);
+    vec3 hot=mix(vec3(.95,.5,.0),vec3(.95,.05,.6),clamp(f+.25*sin(uT*6.*uE+f*8.),0.,1.));
+    vec3 c=mix(calm,hot,smoothstep(.08,.75,uE))*(.3+.6*f);
+    c+=vec3(0.,.3,.35)*uF*pow(f,2.)*.5;
+    c+=uE*.12*sin(uT*7.-length(vUv-uP)*14.);
+    c*=1.-.6*length(vUv-.5);
+    gl_FragColor=vec4(c,1.);}`})));
+function resize(){ renderer.setSize(innerWidth,innerHeight,false); U.uR.value.set(innerWidth,innerHeight); }
+addEventListener('resize',resize); resize();
+
+/* ============ MEDIAPIPE ============ */
+const video=$('cam'), view=$('view'), ctx=view.getContext('2d');
+const faceMesh = new FaceMesh({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${f}`});
+faceMesh.setOptions({maxNumFaces:1, refineLandmarks:false, minDetectionConfidence:.5, minTrackingConfidence:.5});
+faceMesh.onResults(r=>{ S.face = r.multiFaceLandmarks && r.multiFaceLandmarks[0] || null; if(S.face) analyzeFace(S.face); });
+const hands = new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`});
+hands.setOptions({maxNumHands:1, modelComplexity:0, minDetectionConfidence:.6, minTrackingConfidence:.5});
+hands.onResults(r=>{ S.hand = r.multiHandLandmarks && r.multiHandLandmarks[0] || null; analyzeHand(S.hand); });
+
+/* ---- face analysis: motion, blink, concentration ---- */
+function ear(f,v1,v2,h1,h2){ return dist(f[v1],f[v2],640,480) / (dist(f[h1],f[h2],640,480)+1e-6); }
+function analyzeFace(f){
+  const now = performance.now(), n = f[1];
+  // motion velocity (normalized units / sec)
+  if(S.prev){ const dt=(now-S.prevT)/1000; if(dt>0){ const v = dist(n,S.prev)/dt;
+    S.energy += (clamp(v*2.2) - S.energy)*.12; } }
+  S.prev = {x:n.x,y:n.y}; S.prevT = now; S.pos = {x:1-n.x, y:1-n.y};
+  // steadiness = low jitter of nose over ~60 samples
+  S.nose.push({x:n.x,y:n.y}); if(S.nose.length>60) S.nose.shift();
+  const mx = S.nose.reduce((a,p)=>a+p.x,0)/S.nose.length, my = S.nose.reduce((a,p)=>a+p.y,0)/S.nose.length;
+  const sd = Math.sqrt(S.nose.reduce((a,p)=>a+(p.x-mx)**2+(p.y-my)**2,0)/S.nose.length);
+  S.steady = clamp(1 - sd/.02);
+  // blink detection (eye aspect ratio)
+  const e = (ear(f,159,145,33,133)+ear(f,386,374,362,263))/2;
+  if(e<.17 && !S.eyeClosed){ S.eyeClosed = true; }
+  if(e>.21 && S.eyeClosed){ S.eyeClosed = false; S.blinks.push(now); }
+  S.blinks = S.blinks.filter(t=>now-t<60000);
+  const rate = S.blinks.length * (60000/Math.max(15000,Math.min(60000,now-startT)));
+  S.rate = rate;
+  const blinkScore = clamp(1 - Math.abs(rate-16)/16);
+  let target = (.65*S.steady + .35*blinkScore)*100 - (S.phone?20:0);
+  S.focus += (clamp(target,0,100) - S.focus)*.05;
+}
+
+/* ---- hand gestures ---- */
+const hist=[]; let cand='NONE', candN=0, fired=null, lastRep=0, lastSwipe=0;
+function ext(h,tip,pip){ return dist(h[tip],h[0]) > dist(h[pip],h[0])*1.12; }
+function classify(h){
+  const idx=ext(h,8,6), mid=ext(h,12,10), rng=ext(h,16,14), pnk=ext(h,20,18);
+  const curled = !idx&&!mid&&!rng&&!pnk;
+  if(curled){
+    if(h[4].y < h[2].y-.07) return 'THUMBS_UP';
+    if(h[4].y > h[2].y+.07) return 'THUMBS_DOWN';
+    return 'FIST';
+  }
+  if(idx&&mid&&!rng&&!pnk) return 'PEACE';
+  if(idx&&mid&&rng&&pnk) return 'PALM';
+  return 'NONE';
+}
+function analyzeHand(h){
+  const now=performance.now();
+  if(!h){ cand='NONE'; candN=0; fired=null; hist.length=0; $('gest').textContent='NONE'; return; }
+  const g = classify(h); $('gest').textContent = g.replace('_',' ');
+  // body motion from hand too (when no face)
+  if(!S.face){ S.energy += (clamp(Math.abs(h[9].x-(S.pos.x? 1-S.pos.x:.5))*3)-S.energy)*.05; S.pos={x:1-h[9].x,y:1-h[9].y}; }
+  // swipe (open palm, horizontal travel in ~450ms, mirrored view)
+  hist.push({t:now,x:1-h[9].x}); while(hist.length&&now-hist[0].t>450) hist.shift();
+  if(g==='PALM' && hist.length>3 && now-lastSwipe>1100){
+    const dx = hist[hist.length-1].x - hist[0].x;
+    if(Math.abs(dx)>.26){ lastSwipe=now; hist.length=0; const a=dx>0?'SWIPE_RIGHT':'SWIPE_LEFT';
+      $('gest').textContent=a.replace('_',' '); sendAction(ACTIONS[a],a); return; }
+  }
+  // static gestures need ~5 stable frames
+  if(g===cand) candN++; else { cand=g; candN=1; if(g!==fired) fired=null; }
+  if(candN>=5 && ACTIONS[g]){
+    const rep = (g==='THUMBS_UP'||g==='THUMBS_DOWN');
+    if(fired!==g){ fired=g; lastRep=now; sendAction(ACTIONS[g],g); }
+    else if(rep && now-lastRep>600){ lastRep=now; sendAction(ACTIONS[g],g); }
+  }
+}
+
+/* ============ OBJECT DETECTION (COCO-SSD) ============ */
+let cocoModel=null, detBusy=false, lastDet=0;
+async function runDetect(now){
+  if(!cocoModel||!CFG.obj||detBusy||now-lastDet<600) return;
+  detBusy=true; lastDet=now;
+  try{
+    const r = await cocoModel.detect(video, 8, .45);
+    S.dets = r.filter(o=>WATCH.includes(o.class));
+    const ph = S.dets.some(o=>o.class==='cell phone');
+    if(ph && !S.phone) log('PHONE in view — distraction penalty','#fa0');
+    S.phone = ph;
+  }catch(e){}
+  detBusy=false;
+}
+
+/* ============ RENDER ============ */
+const lc = document.createElement('canvas'); lc.width=32; lc.height=24; const lx=lc.getContext('2d');
+function mood(){
+  if(S.energy>.6) return 'ENERGETIC';
+  if(S.energy>.25) return 'ACTIVE';
+  return S.focus>60 ? 'CALM · FOCUSED' : 'CALM · DRIFTING';
+}
+function glowColor(){ // focus high = cyan, low = magenta/amber; energy shifts hue warm
+  const hue = 180 + (1-S.focus/100)*130 - S.energy*120;
+  return `hsl(${(hue+360)%360},100%,60%)`;
+}
+function drawLines(pts, conn, col, w=1){
+  ctx.strokeStyle=col; ctx.lineWidth=w; ctx.beginPath();
+  for(const [a,b] of conn){ const p=pts[a], q=pts[b]; if(!p||!q) continue;
+    ctx.moveTo((1-p.x)*640,p.y*480); ctx.lineTo((1-q.x)*640,q.y*480); }
+  ctx.stroke();
+}
+function bracket(x,y,w,h,c,l=14){
+  ctx.strokeStyle=c; ctx.lineWidth=2; ctx.beginPath();
+  [[x,y,1,1],[x+w,y,-1,1],[x,y+h,1,-1],[x+w,y+h,-1,-1]].forEach(([px,py,sx,sy])=>{
+    ctx.moveTo(px+sx*l,py); ctx.lineTo(px,py); ctx.lineTo(px,py+sy*l); });
+  ctx.stroke();
+}
+function render(now){
+  ctx.save(); ctx.translate(640,0); ctx.scale(-1,1); ctx.drawImage(video,0,0,640,480); ctx.restore();
+  ctx.fillStyle='rgba(0,10,20,.35)'; ctx.fillRect(0,0,640,480);
+  const gc = glowColor();
+  ctx.shadowColor = gc; ctx.shadowBlur = 4 + S.focus*.12;
+  if(S.face){
+    drawLines(S.face, FACEMESH_FACE_OVAL, gc, 1.5);
+    drawLines(S.face, FACEMESH_LEFT_EYE, '#5eead4', 1.2); drawLines(S.face, FACEMESH_RIGHT_EYE, '#5eead4', 1.2);
+    drawLines(S.face, FACEMESH_LIPS, '#c4b5fd', 1.2);
+    drawLines(S.face, FACEMESH_TESSELATION.filter((_,i)=>i%6===0), gc.replace('60%)','60%,.35)').replace('hsl','hsla'), .5);
+    let x0=1,y0=1,x1=0,y1=0; for(const p of S.face){ x0=Math.min(x0,p.x);y0=Math.min(y0,p.y);x1=Math.max(x1,p.x);y1=Math.max(y1,p.y); }
+    bracket((1-x1)*640-8,y0*480-8,(x1-x0)*640+16,(y1-y0)*480+16,gc,18);
+    ctx.shadowBlur=0; ctx.fillStyle=gc; ctx.font='11px monospace';
+    ctx.fillText(`SUBJECT-01  FOCUS ${S.focus.toFixed(0)}%  ${mood()}`,(1-x1)*640-8,y0*480-14);
+  }
+  if(S.hand){ ctx.shadowBlur=6; drawLines(S.hand, HAND_CONNECTIONS, '#c4b5fd', 2);
+    ctx.fillStyle='#fff'; for(const p of S.hand){ ctx.fillRect((1-p.x)*640-2,p.y*480-2,4,4); } }
+  ctx.shadowBlur=0; ctx.font='11px monospace';
+  for(const o of S.dets){ const [x,y,w,h]=o.bbox, mx=640-x-w;
+    const c = o.class==='cell phone' ? '#ff9a00' : '#0f8';
+    bracket(mx,y,w,h,c,12); ctx.strokeStyle=c+'55'; ctx.lineWidth=1; ctx.strokeRect(mx,y,w,h);
+    ctx.beginPath(); ctx.moveTo(mx,y); ctx.lineTo(mx+w,y+h); ctx.moveTo(mx+w,y); ctx.lineTo(mx,y+h); ctx.globalAlpha=.25; ctx.stroke(); ctx.globalAlpha=1;
+    ctx.fillStyle=c; ctx.fillText(`${o.class.toUpperCase()} ${(o.score*100|0)}%`,mx+2,y-4); }
+  // sweeping scan line
+  const sy = (now/8)%480; ctx.fillStyle='rgba(0,255,230,.12)'; ctx.fillRect(0,sy,640,2);
+}
+
+/* ============ MAIN LOOP ============ */
+let startT=performance.now(), last=performance.now(), fcount=0, running=false, busy=false, tick=0;
+async function loop(now){
+  requestAnimationFrame(loop);
+  if(!running) return;
+  tick++; fcount++;
+  if(!busy && video.readyState>=2){
+    busy=true;
+    (tick%2 ? faceMesh : hands).send({image:video}).catch(()=>{}).finally(()=>busy=false);
+  }
+  runDetect(now);
+  S.energy *= .995;                    // gentle decay when nothing moves
+  // background uniforms (smoothed)
+  U.uT.value = now/1000; U.uE.value += (S.energy-U.uE.value)*.1; U.uF.value += (S.focus/100-U.uF.value)*.05;
+  U.uP.value.x += (S.pos.x-U.uP.value.x)*.08; U.uP.value.y += (S.pos.y-U.uP.value.y)*.08;
+  renderer.render(scene,ocam);
+  render(now);
+  if(now-last>=1000){
+    $('fps').textContent = fcount; fcount=0; last=now;
+    lx.drawImage(video,0,0,32,24); const d=lx.getImageData(0,0,32,24).data; let s=0;
+    for(let i=0;i<d.length;i+=4) s+=.299*d[i]+.587*d[i+1]+.114*d[i+2]; S.lux=Math.round(s/768/255*1000);
+    $('mood').textContent=mood(); $('enV').textContent=(S.energy*100|0)+'%'; $('enB').style.width=S.energy*100+'%';
+    $('foV').textContent=(S.focus|0)+'%'; $('foB').style.strokeDashoffset=251.3*(1-S.focus/100);
+    $('blk').textContent=(S.rate||0).toFixed(0); $('std').textContent=((S.steady||0)*100|0)+'%';
+    $('lux').textContent=S.lux; $('obj').textContent=S.dets.length;
+  }
+}
+requestAnimationFrame(loop);
+
+$('go').onclick = async ()=>{
+  const st=$('status'); st.textContent='Requesting camera…';
+  try{
+    video.srcObject = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,frameRate:30},audio:false});
+    await video.play();
+  }catch(e){ st.textContent='Camera error: '+e.message; return; }
+  st.textContent='Loading models (first run downloads ~15MB)…';
+  try{ await faceMesh.initialize(); await hands.initialize(); }catch(e){ st.textContent='MediaPipe load failed: '+e.message; return; }
+  $('start').style.display='none'; running=true; startT=performance.now();
+  log('Camera + models online','#5eead4');
+  if(window.cocoSsd) cocoSsd.load({base:'lite_mobilenet_v2'}).then(m=>{cocoModel=m; log('Object scanner online','#0f8');}).catch(()=>log('Object model failed to load','#f4f'));
+};
+
+/* ============ UI WIRING ============ */
+const tabs=document.querySelectorAll('[data-tab]');
+tabs.forEach(b=>b.onclick=()=>{tabs.forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('[data-pane]').forEach(p=>p.classList.toggle('hidden',p.dataset.pane!==b.dataset.tab));});
+$('gear').onclick=()=>document.querySelector('[data-tab=set]').click();
+$('cfgBridge').value=CFG.bridge;
+$('cfgBridge').onchange=e=>{BRIDGE=CFG.bridge=e.target.value.trim()||'http://127.0.0.1:8765';saveCfg();ping();};
+$('cfgObj').checked=CFG.obj;
+$('cfgObj').onchange=e=>{CFG.obj=e.target.checked;if(!CFG.obj)S.dets=[];saveCfg();};
+</script>
+</body>
+</html>
